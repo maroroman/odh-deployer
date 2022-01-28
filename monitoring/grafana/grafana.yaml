@@ -82,35 +82,12 @@ spec:
         deployment: grafana
     spec:
       containers:
-        - env:
-            - name: LABEL
-              value: grafana_dashboard
-            - name: FOLDER
-              value: /tmp/
-            - name: FOLDER_ANNOTATION
-              value: grafana-folder
-            - name: RESOURCE
-              value: configmap
-            - name: UNIQUE_FILENAMES
-              value: 'true'
-          image: quay.io/kiwigrid/k8s-sidecar:1.11.0
-          name: dashboard-discovery
-          resources:
-            limits:
-              cpu: 200m
-              memory: 200Mi
-            requests:
-              cpu: 100m
-              memory: 100Mi
-          volumeMounts:
-            - mountPath: /grafana-dashboard-definitions
-              name: grafana-dashboard-definitions
         - args:
             - '-config=/etc/grafana/grafana.ini'
           env:
             - name: GF_INSTALL_PLUGINS
               value: grafana-piechart-panel
-          image: quay.io/modh/grafana:7.5.0
+          image: registry.redhat.io/openshift4/ose-grafana
           imagePullPolicy: Always
           livenessProbe:
             httpGet:
@@ -153,6 +130,8 @@ spec:
               name: grafana-config
             - mountPath: /grafana-dashboard-definitions
               name: grafana-dashboard-definitions
+            - mountPath: /grafana-dashboard-definitions/0
+              name: grafana-dashboard-jupyterhub-slis
         - args:
             - '-provider=openshift'
             - '-https-address=:8443'
@@ -171,7 +150,7 @@ spec:
             - '-skip-auth-regex=^/metrics'
           env:
             - name: redhat-ods-monitoring
-          image: quay.io/openshift/origin-oauth-proxy:4.7.0
+          image: registry.redhat.io/openshift4/ose-oauth-proxy:v4.8
           imagePullPolicy: IfNotPresent
           name: auth-proxy
           ports:
@@ -184,6 +163,26 @@ spec:
             requests:
               cpu: 100m
               memory: 50Mi
+          livenessProbe:
+            httpGet:
+              path: /oauth/healthz
+              port: 8443
+              scheme: HTTPS
+            initialDelaySeconds: 30
+            timeoutSeconds: 1
+            periodSeconds: 5
+            successThreshold: 1
+            failureThreshold: 3
+          readinessProbe:
+            httpGet:
+              path: /oauth/healthz
+              port: 8443
+              scheme: HTTPS
+            initialDelaySeconds: 5
+            timeoutSeconds: 1
+            periodSeconds: 5
+            successThreshold: 1
+            failureThreshold: 3
           volumeMounts:
             - mountPath: /etc/proxy/secrets
               name: grafana-proxy-secret
@@ -223,6 +222,11 @@ spec:
           secret:
             defaultMode: 420
             secretName: grafana-tls
+        - configMap:
+            defaultMode: 420
+            name: grafana-dashboard-jupyterhub-slis
+          name: grafana-dashboard-jupyterhub-slis
+
   test: false
   triggers:
     - type: ConfigChange

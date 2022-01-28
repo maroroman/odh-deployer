@@ -99,7 +99,26 @@ export jupyterhub_prometheus_api_token=$(openssl rand -hex 32)
 sed -i "s/<jupyterhub_prometheus_api_token>/$jupyterhub_prometheus_api_token/g" monitoring/jupyterhub-prometheus-token-secrets.yaml
 oc create -n ${ODH_PROJECT} -f monitoring/jupyterhub-prometheus-token-secrets.yaml || echo "INFO: Jupyterhub scrape token already exist."
 
-oc apply -n $ODH_PROJECT -f jupyterhub/cuda-11.0.3/manifests.yaml
+# Create the runtime buildchain if the rhods-buildchain configmap is missing,
+# otherwise recreate it if the stored hecksum does not match
+$HOME/buildchain.sh
+
+# As a one-time repair, move the tags for generic and minimal to py3.8 instead of v0.0.5 and v0.0.15
+set +e
+res=$(oc tag s2i-minimal-notebook:v0.0.15 s2i-minimal-notebook:py3.8 -n ${ODH_PROJECT} &>/dev/null)
+if [ "$?" -eq 0 ]; then
+    # tagging v0.0.15 to py3.8 worked, which means the v0.0.15 tag existed :) Remove it
+    echo Tagged s2i-minimal-notebook:v0.0.15 to s2i-minimal-notebook:py3.8
+    oc tag -d s2i-minimal-notebook:v0.0.15 -n ${ODH_PROJECT}
+fi
+
+res=$(oc tag s2i-generic-data-science-notebook:v0.0.5 s2i-generic-data-science-notebook:py3.8 -n ${ODH_PROJECT} &>/dev/null)
+if [ "$?" -eq 0 ]; then
+    # tagging v0.0.5 to py3.8 worked, which means the v0.0.5 tag existed :) Remove it
+    echo Tagged s2i-generic-data-science-notebook:v0.0.5 to s2i-generic-data-science-notebook:py3.8
+    oc tag -d s2i-generic-data-science-notebook:v0.0.5 -n ${ODH_PROJECT}
+fi
+set -e
 
 # Check if the installation target is OSD to determine the deployment manifest path
 deploy_on_osd=0
@@ -117,6 +136,8 @@ if [ "$deploy_on_osd" -eq 0 ]; then
   oc apply -n ${ODH_PROJECT} -f cloud-resource-operator/postgres.yaml
   oc::wait::object::availability "oc get secret jupyterhub-rds-secret -n $ODH_PROJECT" 30 60
 
+  sed -i '/tlsSkipVerify/d' monitoring/grafana/grafana-secrets.yaml
+
   # Give dedicated-admins group CRUD access to ConfigMaps, Secrets, ImageStreams, Builds and BuildConfigs in select namespaces
   for target_project in ${ODH_PROJECT} ${ODH_NOTEBOOK_PROJECT}; do
     oc apply -n $target_project -f rhods-osd-configs.yaml
@@ -126,8 +147,6 @@ if [ "$deploy_on_osd" -eq 0 ]; then
     fi
   done
 
-  oc apply -n ${ODH_PROJECT} -f jupyterhub/jupyterhub-db-probe/jupyterhub-db-probe-osd.yaml
-
 else
   # Not on OpenShift Dedicated, deploy local
   ODH_MANIFESTS="opendatahub.yaml"
@@ -136,11 +155,8 @@ else
   export jupyterhub_postgresql_password=$(openssl rand -hex 32)
   sed -i "s/<jupyterhub_postgresql_password>/$jupyterhub_postgresql_password/g" jupyterhub/jupyterhub-database-password.yaml
   oc create -n ${ODH_PROJECT} -f jupyterhub/jupyterhub-database-password.yaml || echo "INFO: Jupyterhub Password already exist."
-  oc apply -n ${ODH_PROJECT} -f jupyterhub/jupyterhub-db-probe/jupyterhub-db-probe-ocp.yaml
 
 fi
-
-oc apply -n ${ODH_PROJECT} -f jupyterhub/jupyterhub-db-probe/jupyterhub-db-probe-svc.yaml
 
 oc apply -n ${ODH_PROJECT} -f ${ODH_MANIFESTS}
 if [ $? -ne 0 ]; then
@@ -231,17 +247,36 @@ then
   sed -i "s/redhat-openshift-alert@devshift.net/redhat-openshift-alert@rhmw.io/g" monitoring/prometheus/prometheus.yaml
 fi
 
+if [[ "$(oc get route -n openshift-console console --template={{.spec.host}})" =~ .*"aisrhods".* ]]
+then
+  echo "Cluster is for RHODS engineering or test purposes. Disabling SRE alerting."
+  sed -i "s/receiver: PagerDuty/receiver: developer-mails/g" monitoring/prometheus/prometheus.yaml
+else
+  echo "Cluster is not for RHODS engineering or test purposes."
+fi
+
 oc apply -n $ODH_MONITORING_PROJECT -f monitoring/prometheus/prometheus.yaml
 oc apply -n $ODH_MONITORING_PROJECT -f monitoring/grafana/grafana-sa.yaml
 
+oc delete replicasets -n $ODH_MONITORING_PROJECT -l deployment=prometheus
+
 prometheus_route=$(oc::wait::object::availability "oc get route prometheus -n $ODH_MONITORING_PROJECT -o jsonpath='{.spec.host}'" 2 30 | tr -d "'")
 grafana_token=$(oc::wait::object::availability "oc sa get-token grafana -n $ODH_MONITORING_PROJECT" 2 30)
+grafana_proxy_secret=$(oc get -n $ODH_MONITORING_PROJECT secret grafana-proxy-config -o jsonpath='{.data.session_secret}') && returncode=$? || returncode=$?
 
-sed -i "s/<change_proxy_secret>/$(openssl rand -hex 32)/g" monitoring/grafana/grafana-secrets.yaml
+if [[ $returncode == 0 ]]
+then
+    echo "INFO: Grafana secrets already exist"
+    grafana_proxy_secret_token=$(echo $grafana_proxy_secret | base64 --decode)
+else
+    echo "INFO: Grafana secrets did not exist. Generating new proxy token"
+    grafana_proxy_secret_token=$(openssl rand -hex 32)
+fi
+sed -i "s/<change_proxy_secret>/$grafana_proxy_secret_token/g" monitoring/grafana/grafana-secrets.yaml
 sed -i "s/<change_route>/$prometheus_route/g" monitoring/grafana/grafana-secrets.yaml
 sed -i "s/<change_token>/$grafana_token/g" monitoring/grafana/grafana-secrets.yaml
 
-oc create -n $ODH_MONITORING_PROJECT -f monitoring/grafana/grafana-secrets.yaml || echo "INFO: Grafana secrets already exist."
+oc apply -n $ODH_MONITORING_PROJECT -f monitoring/grafana/grafana-secrets.yaml
 
 oc::wait::object::availability "oc get secret grafana-config -n $ODH_MONITORING_PROJECT" 2 30
 oc::wait::object::availability "oc get secret grafana-proxy-config -n $ODH_MONITORING_PROJECT" 2 30
