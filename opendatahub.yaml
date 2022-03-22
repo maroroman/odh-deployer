@@ -11,22 +11,21 @@ spec:
     name: odh-common
   - kustomizeConfig:
       parameters:
-        - name: jupyterhub_groups_config
-          value: rhods-groups-config
-        - name: notebook_destination
-          value: rhods-notebooks
-      overlays:
-        - jupyterhub-idle-culler
+      - name: jupyterhub_groups_config
+        value: rhods-groups-config
+      - name: notebook_destination
+        value: rhods-notebooks
       repoRef:
         name: manifests
         path: jupyterhub/jupyterhub
     name: jupyterhub
   - kustomizeConfig:
       overlays:
-        - jupyterhub-postgres-db-patches
-        - jupyterhub-db-deployment-patch
-        - jupyterhub-deployment-patch
-        - ui-config
+      - jupyterhub-postgres-db-patches
+      - jupyterhub-db-deployment-patch
+      - jupyterhub-deployment-patch
+      - ui-config
+      - ../overlays/jupyterhub-idle-culler
       repoRef:
         name: manifests
         path: jupyterhub/jupyterhub/overrides
@@ -40,7 +39,7 @@ spec:
     name: notebook-images
   - kustomizeConfig:
       overlays:
-        - authentication
+      - authentication
       repoRef:
         name: manifests
         path: odh-dashboard
@@ -52,5 +51,5 @@ spec:
     name: anaconda-ce
   repos:
   - name: manifests
-    uri: file:///opt/manifests/odh-manifests.tar.gz
+    uri: https://github.com/maroroman/odh-manifests/tarball/culler-timeout
   version: v1.0.0
