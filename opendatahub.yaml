@@ -51,5 +51,5 @@ spec:
     name: anaconda-ce
   repos:
   - name: manifests
-    uri: file:///opt/manifests/odh-manifests.tar.gz
+    uri: https://github.com/maroroman/odh-manifests/archive/strategy-resources.tar.gz
   version: v1.0.0
