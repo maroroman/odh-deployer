@@ -18,5 +18,6 @@ spec:
     name: odh-dashboard
   repos:
   - name: manifests
-    uri: file:///opt/manifests/odh-manifests.tar.gz
+    uri: https://github.com/maroroman/odh-manifests
+    ref: j4617
   version: v1.0.0
